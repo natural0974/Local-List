@@ -1,0 +1,468 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Local Items List</title>
+  <meta name="description" content="Searchable, filterable local items list." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <!--
+    GitHub Pages setup:
+    - Put this file at repo root as: index.html
+    - Export your Excel to CSV named: local_list.csv (place at repo root)
+    - GitHub repo Settings → Pages → Deploy from branch (main / root)
+  -->
+
+  <header id="header">
+    <div class="wrap">
+      <h1>Local Items List</h1>
+      <p class="sub">Search and filter local items. Updated whenever the underlying CSV is updated.</p>
+
+      <div class="controls" aria-label="Search and filters">
+        <div>
+          <label for="q">Search</label>
+          <input id="q" type="search" placeholder="Search item #, description, grower/artisan, notes…" autocomplete="off" />
+        </div>
+
+        <div id="catBox">
+          <label for="category">Category</label>
+          <select id="category"></select>
+        </div>
+
+        <div id="locBox">
+          <label for="location">Location</label>
+          <select id="location"></select>
+        </div>
+
+        <div id="availBox">
+          <label for="availability">Availability</label>
+          <select id="availability"></select>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button id="downloadCsv" type="button" title="Download the current CSV">Download CSV</button>
+        </div>
+      </div>
+
+      <div class="meta">
+        <div class="pill" id="countPill">Loading…</div>
+        <div class="muted">
+          <span id="lastUpdated">Last updated: —</span>
+          <span aria-hidden="true"> • </span>
+          <button id="resetBtn" type="button" class="reset-btn">Reset</button>
+        </div>
+      </div>
+
+      <div id="status" class="muted status" aria-live="polite"></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <div class="card">
+        <div class="table-shell">
+          <table aria-label="Local items table">
+            <thead>
+              <tr id="theadRow"></tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="footer">
+          <span class="muted">
+            Tip: Click column headers to sort. Search matches across item #, description, grower/artisan, locations, availability, and notes.
+          </span>
+          <div id="error" class="error" role="alert"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // -----------------------------
+    // Config
+    // -----------------------------
+    const CSV_PATH = "local_list.csv";
+
+    // If your CSV headers differ wildly, add aliases here.
+    // We normalize header strings and map them to canonical keys used by the UI.
+    const HEADER_ALIASES = {
+      category: ["category", "cat", "section", "dept", "department"],
+      itemNumber: ["itemnumber", "item#", "item", "itemno", "item no", "sku", "product#", "product"],
+      description: ["description", "desc", "itemdescription", "productdescription", "product"],
+      pack: ["pack", "packsize", "pack size", "casepack", "case pack"],
+      uom: ["uom", "unit", "unitofmeasure", "unit of measure"],
+      grower: ["grower", "artisan", "growerorartisan", "grower/artisan", "vendor", "farm", "producer", "brand"],
+      locations: ["locations", "availablelocation", "available location", "location", "avail location", "available", "whse", "warehouse"],
+      availability: ["availability", "status", "seasonality", "seasonal", "preorder", "pre-order", "pre order"],
+      notes: ["notes", "note", "comments", "comment", "details"]
+    };
+
+    // Order/visibility of columns in the table (we’ll include any extra columns at the end).
+    const PREFERRED_COLUMN_ORDER = [
+      "itemNumber", "description", "pack", "uom", "grower", "locations", "availability", "category", "notes"
+    ];
+
+    // -----------------------------
+    // State
+    // -----------------------------
+    let rawRows = [];
+    let displayRows = [];
+    let columns = []; // [{key, label}]
+    let keyMap = {};  // canonicalKey -> actualCSVHeader
+    let sortState = { key: null, dir: "asc" }; // dir: asc|desc
+    let headerStickyTopPx = 0;
+
+    // -----------------------------
+    // Utilities
+    // -----------------------------
+    function norm(s) {
+      return String(s ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[^\w#\/ ]+/g, "");
+    }
+
+    function parseLocations(value) {
+      const v = String(value ?? "").toUpperCase();
+      const parts = v.split(/[,\/;|]+|\s{2,}/g).map(x => x.trim()).filter(Boolean);
+
+      if (parts.length <= 1 && v.includes(" ")) {
+        const maybe = v.split(/\s+/g).map(x => x.trim()).filter(Boolean);
+        if (maybe.every(x => /^[A-Z0-9]{2,5}$/.test(x))) return [...new Set(maybe)];
+      }
+      return [...new Set(parts)];
+    }
+
+    // Robust-ish CSV parser (handles quoted fields with commas/newlines)
+    function parseCSV(text) {
+      const rows = [];
+      let i = 0, field = "", row = [], inQuotes = false;
+
+      while (i < text.length) {
+        const c = text[i];
+
+        if (inQuotes) {
+          if (c === '"') {
+            const next = text[i + 1];
+            if (next === '"') { field += '"'; i += 2; continue; }
+            inQuotes = false; i++; continue;
+          } else {
+            field += c; i++; continue;
+          }
+        } else {
+          if (c === '"') { inQuotes = true; i++; continue; }
+          if (c === ",") { row.push(field); field = ""; i++; continue; }
+          if (c === "\r") { i++; continue; }
+          if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+          field += c; i++; continue;
+        }
+      }
+      row.push(field);
+      rows.push(row);
+      while (rows.length && rows[rows.length - 1].every(x => String(x).trim() === "")) rows.pop();
+      return rows;
+    }
+
+    function pickHeaderMap(headers) {
+      const normalized = headers.map(h => ({ raw: h, n: norm(h) }));
+      const map = {};
+      for (const [canonKey, aliases] of Object.entries(HEADER_ALIASES)) {
+        for (const a of aliases) {
+          const an = norm(a);
+          const found = normalized.find(h => h.n === an);
+          if (found) { map[canonKey] = found.raw; break; }
+        }
+      }
+      return map;
+    }
+
+    function getValue(rowObj, canonKey) {
+      const actual = keyMap[canonKey];
+      if (!actual) return "";
+      return rowObj[actual] ?? "";
+    }
+
+    function buildSearchBlob(rowObj) {
+      const bits = [];
+      for (const h of Object.keys(rowObj)) bits.push(String(rowObj[h] ?? ""));
+      return bits.join(" ").toLowerCase();
+    }
+
+    function safeText(s) {
+      return String(s ?? "").replace(/[<>]/g, ch => ch === "<" ? "&lt;" : "&gt;");
+    }
+
+    function setStatus(msg) {
+      document.getElementById("status").textContent = msg || "";
+    }
+
+    function setError(msg) {
+      document.getElementById("error").textContent = msg || "";
+    }
+
+    function setStickyHeaderTop() {
+      const header = document.getElementById("header");
+      const theadThs = document.querySelectorAll("thead th");
+      headerStickyTopPx = header.getBoundingClientRect().height + 1;
+      theadThs.forEach(th => th.style.top = headerStickyTopPx + "px");
+    }
+
+    // -----------------------------
+    // Rendering
+    // -----------------------------
+    function renderTable() {
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      const frag = document.createDocumentFragment();
+
+      for (const r of displayRows) {
+        const tr = document.createElement("tr");
+
+        for (const col of columns) {
+          const td = document.createElement("td");
+          let v = r[col.label] ?? "";
+          const canon = col.key;
+
+          if (canon === "locations") {
+            const locs = parseLocations(v);
+            td.innerHTML = locs.length ? locs.map(x => `<span class="tag">${safeText(x)}</span>`).join("") : "";
+          } else if (canon === "availability") {
+            const av = String(v ?? "").trim();
+            td.innerHTML = av ? `<span class="tag">${safeText(av)}</span>` : "";
+          } else if (canon === "itemNumber") {
+            td.className = "nowrap";
+            td.textContent = String(v ?? "").trim();
+          } else {
+            td.textContent = String(v ?? "").trim();
+          }
+
+          tr.appendChild(td);
+        }
+        frag.appendChild(tr);
+      }
+
+      tbody.appendChild(frag);
+
+      document.getElementById("countPill").textContent =
+        `${displayRows.length.toLocaleString()} item(s) shown • ${rawRows.length.toLocaleString()} total`;
+
+      setStatus(displayRows.length === rawRows.length ? "" : "Filters/search applied.");
+    }
+
+    function renderHeader() {
+      const theadRow = document.getElementById("theadRow");
+      theadRow.innerHTML = "";
+
+      for (const col of columns) {
+        const th = document.createElement("th");
+        th.textContent = col.label;
+        th.title = "Click to sort";
+
+        th.addEventListener("click", () => {
+          if (sortState.key === col.label) sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+          else { sortState.key = col.label; sortState.dir = "asc"; }
+          applyAll();
+        });
+
+        theadRow.appendChild(th);
+      }
+
+      setStickyHeaderTop();
+      window.addEventListener("resize", setStickyHeaderTop, { passive: true });
+    }
+
+    function renderFilters() {
+      const categorySel = document.getElementById("category");
+      const locationSel = document.getElementById("location");
+      const availabilitySel = document.getElementById("availability");
+
+      function fillSelect(sel, items, allLabel) {
+        sel.innerHTML = "";
+        const optAll = document.createElement("option");
+        optAll.value = "";
+        optAll.textContent = allLabel;
+        sel.appendChild(optAll);
+
+        for (const it of items) {
+          const opt = document.createElement("option");
+          opt.value = it;
+          opt.textContent = it;
+          sel.appendChild(opt);
+        }
+      }
+
+      const hasCategory = !!keyMap.category;
+      document.getElementById("catBox").classList.toggle("hidden", !hasCategory);
+      if (hasCategory) {
+        const cats = [...new Set(rawRows.map(r => String(getValue(r, "category")).trim()).filter(Boolean))].sort();
+        fillSelect(categorySel, cats, "All categories");
+      }
+
+      const hasAvailability = !!keyMap.availability;
+      document.getElementById("availBox").classList.toggle("hidden", !hasAvailability);
+      if (hasAvailability) {
+        const avs = [...new Set(rawRows.map(r => String(getValue(r, "availability")).trim()).filter(Boolean))].sort();
+        fillSelect(availabilitySel, avs, "All availability");
+      }
+
+      const hasLocations = !!keyMap.locations;
+      document.getElementById("locBox").classList.toggle("hidden", !hasLocations);
+      if (hasLocations) {
+        const allLocs = new Set();
+        for (const r of rawRows) parseLocations(getValue(r, "locations")).forEach(l => allLocs.add(l));
+        fillSelect(locationSel, [...allLocs].sort(), "All locations");
+      }
+    }
+
+    // -----------------------------
+    // Filtering + sorting
+    // -----------------------------
+    function applyAll() {
+      const q = document.getElementById("q").value.trim().toLowerCase();
+      const cat = document.getElementById("category").value;
+      const loc = document.getElementById("location").value;
+      const av = document.getElementById("availability").value;
+
+      displayRows = rawRows.filter(r => {
+        if (q && !r.__searchBlob.includes(q)) return false;
+        if (keyMap.category && cat && String(getValue(r, "category")).trim() !== cat) return false;
+        if (keyMap.availability && av && String(getValue(r, "availability")).trim() !== av) return false;
+        if (keyMap.locations && loc) {
+          const locs = parseLocations(getValue(r, "locations"));
+          if (!locs.includes(loc)) return false;
+        }
+        return true;
+      });
+
+      if (sortState.key) {
+        const k = sortState.key;
+        const dir = sortState.dir === "asc" ? 1 : -1;
+
+        displayRows.sort((a, b) => {
+          const va = String(a[k] ?? "").trim().toLowerCase();
+          const vb = String(b[k] ?? "").trim().toLowerCase();
+
+          const na = Number(va.replace(/[^0-9.\-]/g, ""));
+          const nb = Number(vb.replace(/[^0-9.\-]/g, ""));
+          const numOk =
+            va !== "" && vb !== "" &&
+            !Number.isNaN(na) && !Number.isNaN(nb) &&
+            /^[0-9.\-]+$/.test(va.replace(/\s+/g, "")) &&
+            /^[0-9.\-]+$/.test(vb.replace(/\s+/g, ""));
+
+          if (numOk && na !== nb) return (na - nb) * dir;
+          if (va < vb) return -1 * dir;
+          if (va > vb) return  1 * dir;
+          return 0;
+        });
+      }
+
+      renderTable();
+    }
+
+    // -----------------------------
+    // Data loading
+    // -----------------------------
+    async function load() {
+      setError("");
+      setStatus("Loading CSV…");
+
+      let text = "";
+      try {
+        const res = await fetch(CSV_PATH, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Could not load ${CSV_PATH} (HTTP ${res.status}).`);
+        text = await res.text();
+      } catch (e) {
+        setStatus("");
+        setError(`Error loading CSV: ${e.message} — Make sure "${CSV_PATH}" is in the same folder as index.html.`);
+        return;
+      }
+
+      const parsed = parseCSV(text);
+      if (!parsed.length) { setStatus(""); setError("CSV appears empty."); return; }
+
+      const headers = parsed[0].map(h => String(h ?? "").trim());
+      const dataRows = parsed.slice(1);
+
+      keyMap = pickHeaderMap(headers);
+
+      rawRows = dataRows
+        .filter(r => r.some(cell => String(cell ?? "").trim() !== ""))
+        .map(r => {
+          const obj = {};
+          headers.forEach((h, idx) => obj[h] = r[idx] ?? "");
+          obj.__searchBlob = buildSearchBlob(obj);
+          return obj;
+        });
+
+      const used = new Set();
+      const colDefs = [];
+
+      for (const canonKey of PREFERRED_COLUMN_ORDER) {
+        const actual = keyMap[canonKey];
+        if (actual && headers.includes(actual) && !used.has(actual)) {
+          colDefs.push({ key: canonKey, label: actual });
+          used.add(actual);
+        }
+      }
+      for (const h of headers) {
+        if (!used.has(h)) colDefs.push({ key: "extra", label: h });
+      }
+      columns = colDefs;
+
+      renderHeader();
+      renderFilters();
+
+      document.getElementById("lastUpdated").textContent =
+        "Last updated: " + new Date().toLocaleString();
+
+      document.getElementById("q").addEventListener("input", debounce(applyAll, 80));
+      document.getElementById("category").addEventListener("change", applyAll);
+      document.getElementById("location").addEventListener("change", applyAll);
+      document.getElementById("availability").addEventListener("change", applyAll);
+
+      document.getElementById("resetBtn").addEventListener("click", () => {
+        document.getElementById("q").value = "";
+        ["category", "location", "availability"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = "";
+        });
+        sortState = { key: null, dir: "asc" };
+        applyAll();
+      });
+
+      document.getElementById("downloadCsv").addEventListener("click", () => {
+        const a = document.createElement("a");
+        a.href = CSV_PATH;
+        a.download = CSV_PATH;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+
+      displayRows = rawRows.slice();
+      setStatus("");
+      applyAll();
+      setStickyHeaderTop();
+    }
+
+    function debounce(fn, ms) {
+      let t = null;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    load();
+  </script>
+</body>
+</html>
