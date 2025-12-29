@@ -1,84 +1,113 @@
-<!-- index.html (Excel-like layout) -->
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Local List (Sheet View)</title>
-  <link rel="stylesheet" href="local.css" />
+  <title>Texas Local List</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <!--
-    Put these in your GitHub Pages repo root:
-      - index.html
-      - styles.css
-      - local_list.csv
+    Repo structure (GitHub Pages):
+      /index.html
+      /styles.css
+      /local_list.csv
+      /assets/logo.png
 
-    This layout intentionally looks/feels like an Excel sheet:
-      - faux ribbon
-      - name box + formula bar
-      - column letters + row numbers
-      - grid lines + sticky headers
+    CSV expected columns (header names can vary a bit):
+      - Item# / Item / SKU
+      - Description / Produce / Item Description
+      - Pack
+      - UOM
+      - Grower / Vendor / Artisan
+      - Available Location / Location / Available
+      - Category (optional but recommended)
+
+    If you have multiple categories (Produce, Dairy, etc.), include a Category column.
   -->
 
-  <header class="excel-top">
-    <div class="ribbon">
-      <div class="ribbon-left">
-        <span class="app-dot"></span>
-        <span class="title">Local List</span>
-        <span class="badge">Read-only</span>
+  <div class="page">
+    <header class="brand">
+      <img class="logo" src="assets/logo.png" alt="Hardie's logo" onerror="this.style.display='none';" />
+      <div class="title">Texas Local List</div>
+      <div class="date" id="listDate">12/20/2025</div>
+    </header>
+
+    <section class="controls">
+      <div class="control">
+        <label for="categorySelect">Category</label>
+        <select id="categorySelect"></select>
       </div>
-      <div class="ribbon-tabs">
-        <span class="tab active">Home</span>
-        <span class="tab">Data</span>
-        <span class="tab">View</span>
-        <span class="tab">Help</span>
+      <div class="control">
+        <label for="searchInput">Search</label>
+        <input id="searchInput" type="search" placeholder="Search item, grower, location…" autocomplete="off" />
       </div>
-      <div class="ribbon-right">
-        <span id="status" class="status">Loading local_list.csv…</span>
+      <div class="control control-small">
+        <label for="locationSelect">Location</label>
+        <select id="locationSelect"></select>
       </div>
+      <div class="control control-small">
+        <label for="downloadCsvBtn">&nbsp;</label>
+        <button id="downloadCsvBtn" type="button">Download CSV</button>
+      </div>
+    </section>
+
+    <div class="table-wrap">
+      <table class="grid" aria-label="Texas Local List Table">
+        <thead>
+          <tr class="hdr">
+            <th class="col-item">ITEM#</th>
+            <th class="col-desc" id="descHeader">PRODUCE</th>
+            <th class="col-pack">PACK</th>
+            <th class="col-uom">UOM</th>
+            <th class="col-grower">GROWER</th>
+            <th class="col-loc">AVAILABLE LOCATION</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
     </div>
 
-    <div class="formula-bar">
-      <input class="name-box" id="nameBox" value="A1" aria-label="Name box" />
-      <div class="fx">fx</div>
-      <input class="formula" id="formulaInput" placeholder="Select a cell to view its contents…" aria-label="Formula bar" />
-      <a class="download" id="downloadCsv" href="local_list.csv" download>Download CSV</a>
-    </div>
-  </header>
-
-  <main class="sheet-wrap">
-    <div class="sheet" role="region" aria-label="Sheet grid">
-      <div class="corner" aria-hidden="true"></div>
-      <div class="col-headers" id="colHeaders" aria-hidden="true"></div>
-      <div class="row-headers" id="rowHeaders" aria-hidden="true"></div>
-
-      <div class="grid" id="grid">
-        <table id="table" aria-label="Local items (grid)">
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="tabs">
-      <div class="sheet-tab active">Local List</div>
-      <div class="sheet-tab">Notes</div>
-      <div class="sheet-tab plus">+</div>
-      <div class="spacer"></div>
-      <div class="updated" id="updatedText">—</div>
-    </div>
+    <footer class="notes" id="notes">
+      <!-- Optional: add your footnotes here if you want -->
+      <!-- Example: Local produce brought in seasonally. Items marked * may require pre-order. -->
+    </footer>
 
     <div class="error" id="error" role="alert"></div>
-  </main>
+  </div>
 
   <script>
     const CSV_PATH = "local_list.csv";
 
-    let selectedCell = null;
+    // If you want the date to auto-update to "today", set this to true:
+    const USE_TODAY_DATE = false;
+
+    // If you keep a date column in your CSV (e.g., "ListDate"), you can wire it later.
+    // For now we use the hardcoded date above or today.
+
+    const HEADER_ALIASES = {
+      item: ["item#", "item", "sku", "itemnumber", "item number", "product#", "product number"],
+      desc: ["produce", "description", "desc", "item description", "product", "product description"],
+      pack: ["pack", "packsize", "pack size", "case pack", "casepack"],
+      uom:  ["uom", "unit", "unit of measure", "unitofmeasure"],
+      grower: ["grower", "vendor", "artisan", "farm", "producer", "brand"],
+      loc: ["available location", "available", "location", "locations", "whse", "warehouse"],
+      category: ["category", "cat", "section", "department", "dept"]
+    };
+
+    let rows = [];
+    let headers = [];
+    let map = {};
+    let currentCategory = "";
+    let currentLocation = "";
+    let currentQuery = "";
+
+    function norm(s) {
+      return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ").replace(/[^\w#\/ ]+/g, "");
+    }
 
     function parseCSV(text) {
-      // Robust-ish CSV parser (supports quotes/newlines)
-      const rows = [];
+      const out = [];
       let i = 0, field = "", row = [], inQuotes = false;
 
       while (i < text.length) {
@@ -96,139 +125,142 @@
           if (c === '"') { inQuotes = true; i++; continue; }
           if (c === ",") { row.push(field); field = ""; i++; continue; }
           if (c === "\r") { i++; continue; }
-          if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+          if (c === "\n") { row.push(field); out.push(row); row = []; field = ""; i++; continue; }
           field += c; i++; continue;
         }
       }
       row.push(field);
-      rows.push(row);
+      out.push(row);
 
-      while (rows.length && rows[rows.length - 1].every(x => String(x).trim() === "")) rows.pop();
-      return rows;
+      while (out.length && out[out.length - 1].every(x => String(x).trim() === "")) out.pop();
+      return out;
     }
 
-    function numToColLetters(n) {
-      // 1 -> A, 26 -> Z, 27 -> AA
-      let s = "";
-      while (n > 0) {
-        const r = (n - 1) % 26;
-        s = String.fromCharCode(65 + r) + s;
-        n = Math.floor((n - 1) / 26);
+    function buildHeaderMap(hs) {
+      const normalized = hs.map(h => ({ raw: h, n: norm(h) }));
+      const m = {};
+      for (const [key, aliases] of Object.entries(HEADER_ALIASES)) {
+        for (const a of aliases) {
+          const found = normalized.find(x => x.n === norm(a));
+          if (found) { m[key] = found.raw; break; }
+        }
       }
-      return s;
+      return m;
     }
 
-    function setStatus(msg) {
-      document.getElementById("status").textContent = msg || "";
+    function v(row, key) {
+      const h = map[key];
+      return h ? (row[h] ?? "") : "";
+    }
+
+    function parseLocations(val) {
+      const s = String(val ?? "").toUpperCase();
+      const parts = s.split(/[,\/;|]+|\s{2,}/g).map(x => x.trim()).filter(Boolean);
+      if (parts.length <= 1 && s.includes(" ")) {
+        const maybe = s.split(/\s+/g).map(x => x.trim()).filter(Boolean);
+        if (maybe.every(x => /^[A-Z0-9]{2,6}$/.test(x))) return [...new Set(maybe)];
+      }
+      return [...new Set(parts)];
     }
 
     function setError(msg) {
       document.getElementById("error").textContent = msg || "";
     }
 
-    function setSelectedCell(td) {
-      if (selectedCell) selectedCell.classList.remove("selected");
-      selectedCell = td;
-      selectedCell.classList.add("selected");
+    function fillSelect(selectEl, items, allLabel) {
+      selectEl.innerHTML = "";
+      const all = document.createElement("option");
+      all.value = "";
+      all.textContent = allLabel;
+      selectEl.appendChild(all);
 
-      const r = Number(td.dataset.r); // 1-based row (includes header row)
-      const c = Number(td.dataset.c); // 1-based col
-      const addr = `${numToColLetters(c)}${r}`;
-
-      document.getElementById("nameBox").value = addr;
-      document.getElementById("formulaInput").value = td.textContent ?? "";
+      for (const it of items) {
+        const opt = document.createElement("option");
+        opt.value = it;
+        opt.textContent = it;
+        selectEl.appendChild(opt);
+      }
     }
 
-    function buildHeaders(colCount, rowCount) {
-      // Column letters
-      const colHeaders = document.getElementById("colHeaders");
-      colHeaders.innerHTML = "";
-      for (let c = 1; c <= colCount; c++) {
-        const div = document.createElement("div");
-        div.className = "col-h";
-        div.textContent = numToColLetters(c);
-        colHeaders.appendChild(div);
-      }
-
-      // Row numbers (include header row as row 1)
-      const rowHeaders = document.getElementById("rowHeaders");
-      rowHeaders.innerHTML = "";
-      for (let r = 1; r <= rowCount; r++) {
-        const div = document.createElement("div");
-        div.className = "row-h";
-        div.textContent = String(r);
-        rowHeaders.appendChild(div);
-      }
-
-      // Set CSS variable for column count so header/grid align
-      document.documentElement.style.setProperty("--colCount", colCount);
+    function applyUIHeader(category) {
+      // Match your screenshot: the description column header is the category name (e.g., PRODUCE)
+      const hdr = document.getElementById("descHeader");
+      hdr.textContent = (category || "DESCRIPTION").toUpperCase();
     }
 
-    function renderGrid(rows) {
-      // rows: array of arrays, includes header row at rows[0]
+    function render() {
       const tbody = document.getElementById("tbody");
       tbody.innerHTML = "";
 
-      const colCount = Math.max(...rows.map(r => r.length));
-      const rowCount = rows.length;
-
-      buildHeaders(colCount, rowCount);
-
-      for (let r = 0; r < rowCount; r++) {
-        const tr = document.createElement("tr");
-        tr.className = r === 0 ? "header-row" : "";
-
-        for (let c = 0; c < colCount; c++) {
-          const td = document.createElement("td");
-          td.className = "cell";
-          td.tabIndex = 0;
-
-          const value = rows[r][c] ?? "";
-          td.textContent = value;
-
-          // dataset uses 1-based indices like Excel
-          td.dataset.r = String(r + 1);
-          td.dataset.c = String(c + 1);
-
-          td.addEventListener("click", () => setSelectedCell(td));
-          td.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setSelectedCell(td);
-            }
-            // Basic arrow navigation
-            if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) {
-              e.preventDefault();
-              const rr = Number(td.dataset.r);
-              const cc = Number(td.dataset.c);
-              let nr = rr, nc = cc;
-              if (e.key === "ArrowUp") nr = Math.max(1, rr - 1);
-              if (e.key === "ArrowDown") nr = Math.min(rowCount, rr + 1);
-              if (e.key === "ArrowLeft") nc = Math.max(1, cc - 1);
-              if (e.key === "ArrowRight") nc = Math.min(colCount, cc + 1);
-              const next = document.querySelector(`td.cell[data-r="${nr}"][data-c="${nc}"]`);
-              if (next) { next.focus(); setSelectedCell(next); }
-            }
-          });
-
-          tr.appendChild(td);
+      const filtered = rows.filter(r => {
+        if (map.category && currentCategory) {
+          if (String(v(r, "category")).trim() !== currentCategory) return false;
         }
 
-        tbody.appendChild(tr);
+        if (currentLocation) {
+          const locs = parseLocations(v(r, "loc"));
+          if (!locs.includes(currentLocation)) return false;
+        }
+
+        if (currentQuery) {
+          const blob = (String(v(r,"item")) + " " + String(v(r,"desc")) + " " + String(v(r,"grower")) + " " + String(v(r,"loc"))).toLowerCase();
+          if (!blob.includes(currentQuery)) return false;
+        }
+
+        return true;
+      });
+
+      const frag = document.createDocumentFragment();
+
+      for (const r of filtered) {
+        const tr = document.createElement("tr");
+
+        const tdItem = document.createElement("td");
+        tdItem.className = "col-item";
+        tdItem.textContent = String(v(r, "item")).trim();
+
+        const tdDesc = document.createElement("td");
+        tdDesc.className = "col-desc";
+        tdDesc.textContent = String(v(r, "desc")).trim();
+
+        const tdPack = document.createElement("td");
+        tdPack.className = "col-pack";
+        tdPack.textContent = String(v(r, "pack")).trim();
+
+        const tdUom = document.createElement("td");
+        tdUom.className = "col-uom";
+        tdUom.textContent = String(v(r, "uom")).trim();
+
+        const tdGrower = document.createElement("td");
+        tdGrower.className = "col-grower";
+        tdGrower.textContent = String(v(r, "grower")).trim();
+
+        const tdLoc = document.createElement("td");
+        tdLoc.className = "col-loc";
+        tdLoc.textContent = String(v(r, "loc")).trim();
+
+        tr.appendChild(tdItem);
+        tr.appendChild(tdDesc);
+        tr.appendChild(tdPack);
+        tr.appendChild(tdUom);
+        tr.appendChild(tdGrower);
+        tr.appendChild(tdLoc);
+
+        frag.appendChild(tr);
       }
 
-      // Default select A1
-      const first = document.querySelector('td.cell[data-r="1"][data-c="1"]');
-      if (first) setSelectedCell(first);
-
-      document.getElementById("updatedText").textContent = "Loaded: " + new Date().toLocaleString();
+      tbody.appendChild(frag);
     }
 
     async function load() {
       setError("");
-      setStatus("Loading local_list.csv…");
 
       try {
+        // Date display
+        if (USE_TODAY_DATE) {
+          document.getElementById("listDate").textContent = new Date().toLocaleDateString();
+        }
+
         const res = await fetch(CSV_PATH, { cache: "no-store" });
         if (!res.ok) throw new Error(`Could not load ${CSV_PATH} (HTTP ${res.status}).`);
         const text = await res.text();
@@ -236,18 +268,22 @@
         const parsed = parseCSV(text);
         if (!parsed.length) throw new Error("CSV appears empty.");
 
-        // Keep as-is: header row + all data rows
-        renderGrid(parsed);
+        headers = parsed[0].map(h => String(h ?? "").trim());
+        map = buildHeaderMap(headers);
 
-        setStatus(`Loaded ${parsed.length - 1} row(s). Click cells to view in formula bar.`);
-      } catch (e) {
-        setStatus("");
-        setError("Error: " + e.message + " — Make sure local_list.csv is in the same folder as index.html.");
-      }
-    }
+        if (!map.item || !map.desc) {
+          throw new Error("CSV headers not recognized. Make sure you have Item# and Description/Produce columns.");
+        }
 
-    load();
-  </script>
-</body>
-</html>
+        rows = parsed.slice(1)
+          .filter(r => r.some(cell => String(cell ?? "").trim() !== ""))
+          .map(r => {
+            const obj = {};
+            headers.forEach((h, i) => obj[h] = r[i] ?? "");
+            return obj;
+          });
+
+        // Category dropdown
+        const catSelect = document.getElementById("categorySelect");
+        const hasCategory =
 
