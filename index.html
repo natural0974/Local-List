@@ -1,149 +1,83 @@
-<!-- index.html -->
+<!-- index.html (Excel-like layout) -->
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Local Items List</title>
-  <meta name="description" content="Searchable, filterable local items list." />
-  <link rel="stylesheet" href="local.css"
-    .css" />
+  <title>Local List (Sheet View)</title>
+  <link rel="stylesheet" href="local.css" />
 </head>
-
 <body>
   <!--
-    GitHub Pages setup:
-    - Put this file at repo root as: index.html
-    - Export your Excel to CSV named: local_list.csv (place at repo root)
-    - GitHub repo Settings → Pages → Deploy from branch (main / root)
+    Put these in your GitHub Pages repo root:
+      - index.html
+      - styles.css
+      - local_list.csv
+
+    This layout intentionally looks/feels like an Excel sheet:
+      - faux ribbon
+      - name box + formula bar
+      - column letters + row numbers
+      - grid lines + sticky headers
   -->
 
-  <header id="header">
-    <div class="wrap">
-      <h1>Local Items List</h1>
-      <p class="sub">Search and filter local items. Updated whenever the underlying CSV is updated.</p>
-
-      <div class="controls" aria-label="Search and filters">
-        <div>
-          <label for="q">Search</label>
-          <input id="q" type="search" placeholder="Search item #, description, grower/artisan, notes…" autocomplete="off" />
-        </div>
-
-        <div id="catBox">
-          <label for="category">Category</label>
-          <select id="category"></select>
-        </div>
-
-        <div id="locBox">
-          <label for="location">Location</label>
-          <select id="location"></select>
-        </div>
-
-        <div id="availBox">
-          <label for="availability">Availability</label>
-          <select id="availability"></select>
-        </div>
-
-        <div>
-          <label>&nbsp;</label>
-          <button id="downloadCsv" type="button" title="Download the current CSV">Download CSV</button>
-        </div>
+  <header class="excel-top">
+    <div class="ribbon">
+      <div class="ribbon-left">
+        <span class="app-dot"></span>
+        <span class="title">Local List</span>
+        <span class="badge">Read-only</span>
       </div>
-
-      <div class="meta">
-        <div class="pill" id="countPill">Loading…</div>
-        <div class="muted">
-          <span id="lastUpdated">Last updated: —</span>
-          <span aria-hidden="true"> • </span>
-          <button id="resetBtn" type="button" class="reset-btn">Reset</button>
-        </div>
+      <div class="ribbon-tabs">
+        <span class="tab active">Home</span>
+        <span class="tab">Data</span>
+        <span class="tab">View</span>
+        <span class="tab">Help</span>
       </div>
+      <div class="ribbon-right">
+        <span id="status" class="status">Loading local_list.csv…</span>
+      </div>
+    </div>
 
-      <div id="status" class="muted status" aria-live="polite"></div>
+    <div class="formula-bar">
+      <input class="name-box" id="nameBox" value="A1" aria-label="Name box" />
+      <div class="fx">fx</div>
+      <input class="formula" id="formulaInput" placeholder="Select a cell to view its contents…" aria-label="Formula bar" />
+      <a class="download" id="downloadCsv" href="local_list.csv" download>Download CSV</a>
     </div>
   </header>
 
-  <main>
-    <div class="wrap">
-      <div class="card">
-        <div class="table-shell">
-          <table aria-label="Local items table">
-            <thead>
-              <tr id="theadRow"></tr>
-            </thead>
-            <tbody id="tbody"></tbody>
-          </table>
-        </div>
+  <main class="sheet-wrap">
+    <div class="sheet" role="region" aria-label="Sheet grid">
+      <div class="corner" aria-hidden="true"></div>
+      <div class="col-headers" id="colHeaders" aria-hidden="true"></div>
+      <div class="row-headers" id="rowHeaders" aria-hidden="true"></div>
 
-        <div class="footer">
-          <span class="muted">
-            Tip: Click column headers to sort. Search matches across item #, description, grower/artisan, locations, availability, and notes.
-          </span>
-          <div id="error" class="error" role="alert"></div>
-        </div>
+      <div class="grid" id="grid">
+        <table id="table" aria-label="Local items (grid)">
+          <tbody id="tbody"></tbody>
+        </table>
       </div>
     </div>
+
+    <div class="tabs">
+      <div class="sheet-tab active">Local List</div>
+      <div class="sheet-tab">Notes</div>
+      <div class="sheet-tab plus">+</div>
+      <div class="spacer"></div>
+      <div class="updated" id="updatedText">—</div>
+    </div>
+
+    <div class="error" id="error" role="alert"></div>
   </main>
 
   <script>
-    // -----------------------------
-    // Config
-    // -----------------------------
     const CSV_PATH = "local_list.csv";
 
-    // If your CSV headers differ wildly, add aliases here.
-    // We normalize header strings and map them to canonical keys used by the UI.
-    const HEADER_ALIASES = {
-      category: ["category", "cat", "section", "dept", "department"],
-      itemNumber: ["itemnumber", "item#", "item", "itemno", "item no", "sku", "product#", "product"],
-      description: ["description", "desc", "itemdescription", "productdescription", "product"],
-      pack: ["pack", "packsize", "pack size", "casepack", "case pack"],
-      uom: ["uom", "unit", "unitofmeasure", "unit of measure"],
-      grower: ["grower", "artisan", "growerorartisan", "grower/artisan", "vendor", "farm", "producer", "brand"],
-      locations: ["locations", "availablelocation", "available location", "location", "avail location", "available", "whse", "warehouse"],
-      availability: ["availability", "status", "seasonality", "seasonal", "preorder", "pre-order", "pre order"],
-      notes: ["notes", "note", "comments", "comment", "details"]
-    };
+    let selectedCell = null;
 
-    // Order/visibility of columns in the table (we’ll include any extra columns at the end).
-    const PREFERRED_COLUMN_ORDER = [
-      "itemNumber", "description", "pack", "uom", "grower", "locations", "availability", "category", "notes"
-    ];
-
-    // -----------------------------
-    // State
-    // -----------------------------
-    let rawRows = [];
-    let displayRows = [];
-    let columns = []; // [{key, label}]
-    let keyMap = {};  // canonicalKey -> actualCSVHeader
-    let sortState = { key: null, dir: "asc" }; // dir: asc|desc
-    let headerStickyTopPx = 0;
-
-    // -----------------------------
-    // Utilities
-    // -----------------------------
-    function norm(s) {
-      return String(s ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .replace(/[^\w#\/ ]+/g, "");
-    }
-
-    function parseLocations(value) {
-      const v = String(value ?? "").toUpperCase();
-      const parts = v.split(/[,\/;|]+|\s{2,}/g).map(x => x.trim()).filter(Boolean);
-
-      if (parts.length <= 1 && v.includes(" ")) {
-        const maybe = v.split(/\s+/g).map(x => x.trim()).filter(Boolean);
-        if (maybe.every(x => /^[A-Z0-9]{2,5}$/.test(x))) return [...new Set(maybe)];
-      }
-      return [...new Set(parts)];
-    }
-
-    // Robust-ish CSV parser (handles quoted fields with commas/newlines)
     function parseCSV(text) {
+      // Robust-ish CSV parser (supports quotes/newlines)
       const rows = [];
       let i = 0, field = "", row = [], inQuotes = false;
 
@@ -168,37 +102,20 @@
       }
       row.push(field);
       rows.push(row);
+
       while (rows.length && rows[rows.length - 1].every(x => String(x).trim() === "")) rows.pop();
       return rows;
     }
 
-    function pickHeaderMap(headers) {
-      const normalized = headers.map(h => ({ raw: h, n: norm(h) }));
-      const map = {};
-      for (const [canonKey, aliases] of Object.entries(HEADER_ALIASES)) {
-        for (const a of aliases) {
-          const an = norm(a);
-          const found = normalized.find(h => h.n === an);
-          if (found) { map[canonKey] = found.raw; break; }
-        }
+    function numToColLetters(n) {
+      // 1 -> A, 26 -> Z, 27 -> AA
+      let s = "";
+      while (n > 0) {
+        const r = (n - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        n = Math.floor((n - 1) / 26);
       }
-      return map;
-    }
-
-    function getValue(rowObj, canonKey) {
-      const actual = keyMap[canonKey];
-      if (!actual) return "";
-      return rowObj[actual] ?? "";
-    }
-
-    function buildSearchBlob(rowObj) {
-      const bits = [];
-      for (const h of Object.keys(rowObj)) bits.push(String(rowObj[h] ?? ""));
-      return bits.join(" ").toLowerCase();
-    }
-
-    function safeText(s) {
-      return String(s ?? "").replace(/[<>]/g, ch => ch === "<" ? "&lt;" : "&gt;");
+      return s;
     }
 
     function setStatus(msg) {
@@ -209,261 +126,128 @@
       document.getElementById("error").textContent = msg || "";
     }
 
-    function setStickyHeaderTop() {
-      const header = document.getElementById("header");
-      const theadThs = document.querySelectorAll("thead th");
-      headerStickyTopPx = header.getBoundingClientRect().height + 1;
-      theadThs.forEach(th => th.style.top = headerStickyTopPx + "px");
+    function setSelectedCell(td) {
+      if (selectedCell) selectedCell.classList.remove("selected");
+      selectedCell = td;
+      selectedCell.classList.add("selected");
+
+      const r = Number(td.dataset.r); // 1-based row (includes header row)
+      const c = Number(td.dataset.c); // 1-based col
+      const addr = `${numToColLetters(c)}${r}`;
+
+      document.getElementById("nameBox").value = addr;
+      document.getElementById("formulaInput").value = td.textContent ?? "";
     }
 
-    // -----------------------------
-    // Rendering
-    // -----------------------------
-    function renderTable() {
+    function buildHeaders(colCount, rowCount) {
+      // Column letters
+      const colHeaders = document.getElementById("colHeaders");
+      colHeaders.innerHTML = "";
+      for (let c = 1; c <= colCount; c++) {
+        const div = document.createElement("div");
+        div.className = "col-h";
+        div.textContent = numToColLetters(c);
+        colHeaders.appendChild(div);
+      }
+
+      // Row numbers (include header row as row 1)
+      const rowHeaders = document.getElementById("rowHeaders");
+      rowHeaders.innerHTML = "";
+      for (let r = 1; r <= rowCount; r++) {
+        const div = document.createElement("div");
+        div.className = "row-h";
+        div.textContent = String(r);
+        rowHeaders.appendChild(div);
+      }
+
+      // Set CSS variable for column count so header/grid align
+      document.documentElement.style.setProperty("--colCount", colCount);
+    }
+
+    function renderGrid(rows) {
+      // rows: array of arrays, includes header row at rows[0]
       const tbody = document.getElementById("tbody");
       tbody.innerHTML = "";
-      const frag = document.createDocumentFragment();
 
-      for (const r of displayRows) {
+      const colCount = Math.max(...rows.map(r => r.length));
+      const rowCount = rows.length;
+
+      buildHeaders(colCount, rowCount);
+
+      for (let r = 0; r < rowCount; r++) {
         const tr = document.createElement("tr");
+        tr.className = r === 0 ? "header-row" : "";
 
-        for (const col of columns) {
+        for (let c = 0; c < colCount; c++) {
           const td = document.createElement("td");
-          let v = r[col.label] ?? "";
-          const canon = col.key;
+          td.className = "cell";
+          td.tabIndex = 0;
 
-          if (canon === "locations") {
-            const locs = parseLocations(v);
-            td.innerHTML = locs.length ? locs.map(x => `<span class="tag">${safeText(x)}</span>`).join("") : "";
-          } else if (canon === "availability") {
-            const av = String(v ?? "").trim();
-            td.innerHTML = av ? `<span class="tag">${safeText(av)}</span>` : "";
-          } else if (canon === "itemNumber") {
-            td.className = "nowrap";
-            td.textContent = String(v ?? "").trim();
-          } else {
-            td.textContent = String(v ?? "").trim();
-          }
+          const value = rows[r][c] ?? "";
+          td.textContent = value;
+
+          // dataset uses 1-based indices like Excel
+          td.dataset.r = String(r + 1);
+          td.dataset.c = String(c + 1);
+
+          td.addEventListener("click", () => setSelectedCell(td));
+          td.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedCell(td);
+            }
+            // Basic arrow navigation
+            if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) {
+              e.preventDefault();
+              const rr = Number(td.dataset.r);
+              const cc = Number(td.dataset.c);
+              let nr = rr, nc = cc;
+              if (e.key === "ArrowUp") nr = Math.max(1, rr - 1);
+              if (e.key === "ArrowDown") nr = Math.min(rowCount, rr + 1);
+              if (e.key === "ArrowLeft") nc = Math.max(1, cc - 1);
+              if (e.key === "ArrowRight") nc = Math.min(colCount, cc + 1);
+              const next = document.querySelector(`td.cell[data-r="${nr}"][data-c="${nc}"]`);
+              if (next) { next.focus(); setSelectedCell(next); }
+            }
+          });
 
           tr.appendChild(td);
         }
-        frag.appendChild(tr);
+
+        tbody.appendChild(tr);
       }
 
-      tbody.appendChild(frag);
+      // Default select A1
+      const first = document.querySelector('td.cell[data-r="1"][data-c="1"]');
+      if (first) setSelectedCell(first);
 
-      document.getElementById("countPill").textContent =
-        `${displayRows.length.toLocaleString()} item(s) shown • ${rawRows.length.toLocaleString()} total`;
-
-      setStatus(displayRows.length === rawRows.length ? "" : "Filters/search applied.");
+      document.getElementById("updatedText").textContent = "Loaded: " + new Date().toLocaleString();
     }
 
-    function renderHeader() {
-      const theadRow = document.getElementById("theadRow");
-      theadRow.innerHTML = "";
-
-      for (const col of columns) {
-        const th = document.createElement("th");
-        th.textContent = col.label;
-        th.title = "Click to sort";
-
-        th.addEventListener("click", () => {
-          if (sortState.key === col.label) sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
-          else { sortState.key = col.label; sortState.dir = "asc"; }
-          applyAll();
-        });
-
-        theadRow.appendChild(th);
-      }
-
-      setStickyHeaderTop();
-      window.addEventListener("resize", setStickyHeaderTop, { passive: true });
-    }
-
-    function renderFilters() {
-      const categorySel = document.getElementById("category");
-      const locationSel = document.getElementById("location");
-      const availabilitySel = document.getElementById("availability");
-
-      function fillSelect(sel, items, allLabel) {
-        sel.innerHTML = "";
-        const optAll = document.createElement("option");
-        optAll.value = "";
-        optAll.textContent = allLabel;
-        sel.appendChild(optAll);
-
-        for (const it of items) {
-          const opt = document.createElement("option");
-          opt.value = it;
-          opt.textContent = it;
-          sel.appendChild(opt);
-        }
-      }
-
-      const hasCategory = !!keyMap.category;
-      document.getElementById("catBox").classList.toggle("hidden", !hasCategory);
-      if (hasCategory) {
-        const cats = [...new Set(rawRows.map(r => String(getValue(r, "category")).trim()).filter(Boolean))].sort();
-        fillSelect(categorySel, cats, "All categories");
-      }
-
-      const hasAvailability = !!keyMap.availability;
-      document.getElementById("availBox").classList.toggle("hidden", !hasAvailability);
-      if (hasAvailability) {
-        const avs = [...new Set(rawRows.map(r => String(getValue(r, "availability")).trim()).filter(Boolean))].sort();
-        fillSelect(availabilitySel, avs, "All availability");
-      }
-
-      const hasLocations = !!keyMap.locations;
-      document.getElementById("locBox").classList.toggle("hidden", !hasLocations);
-      if (hasLocations) {
-        const allLocs = new Set();
-        for (const r of rawRows) parseLocations(getValue(r, "locations")).forEach(l => allLocs.add(l));
-        fillSelect(locationSel, [...allLocs].sort(), "All locations");
-      }
-    }
-
-    // -----------------------------
-    // Filtering + sorting
-    // -----------------------------
-    function applyAll() {
-      const q = document.getElementById("q").value.trim().toLowerCase();
-      const cat = document.getElementById("category").value;
-      const loc = document.getElementById("location").value;
-      const av = document.getElementById("availability").value;
-
-      displayRows = rawRows.filter(r => {
-        if (q && !r.__searchBlob.includes(q)) return false;
-        if (keyMap.category && cat && String(getValue(r, "category")).trim() !== cat) return false;
-        if (keyMap.availability && av && String(getValue(r, "availability")).trim() !== av) return false;
-        if (keyMap.locations && loc) {
-          const locs = parseLocations(getValue(r, "locations"));
-          if (!locs.includes(loc)) return false;
-        }
-        return true;
-      });
-
-      if (sortState.key) {
-        const k = sortState.key;
-        const dir = sortState.dir === "asc" ? 1 : -1;
-
-        displayRows.sort((a, b) => {
-          const va = String(a[k] ?? "").trim().toLowerCase();
-          const vb = String(b[k] ?? "").trim().toLowerCase();
-
-          const na = Number(va.replace(/[^0-9.\-]/g, ""));
-          const nb = Number(vb.replace(/[^0-9.\-]/g, ""));
-          const numOk =
-            va !== "" && vb !== "" &&
-            !Number.isNaN(na) && !Number.isNaN(nb) &&
-            /^[0-9.\-]+$/.test(va.replace(/\s+/g, "")) &&
-            /^[0-9.\-]+$/.test(vb.replace(/\s+/g, ""));
-
-          if (numOk && na !== nb) return (na - nb) * dir;
-          if (va < vb) return -1 * dir;
-          if (va > vb) return  1 * dir;
-          return 0;
-        });
-      }
-
-      renderTable();
-    }
-
-    // -----------------------------
-    // Data loading
-    // -----------------------------
     async function load() {
       setError("");
-      setStatus("Loading CSV…");
+      setStatus("Loading local_list.csv…");
 
-      let text = "";
       try {
         const res = await fetch(CSV_PATH, { cache: "no-store" });
         if (!res.ok) throw new Error(`Could not load ${CSV_PATH} (HTTP ${res.status}).`);
-        text = await res.text();
+        const text = await res.text();
+
+        const parsed = parseCSV(text);
+        if (!parsed.length) throw new Error("CSV appears empty.");
+
+        // Keep as-is: header row + all data rows
+        renderGrid(parsed);
+
+        setStatus(`Loaded ${parsed.length - 1} row(s). Click cells to view in formula bar.`);
       } catch (e) {
         setStatus("");
-        setError(`Error loading CSV: ${e.message} — Make sure "${CSV_PATH}" is in the same folder as index.html.`);
-        return;
+        setError("Error: " + e.message + " — Make sure local_list.csv is in the same folder as index.html.");
       }
-
-      const parsed = parseCSV(text);
-      if (!parsed.length) { setStatus(""); setError("CSV appears empty."); return; }
-
-      const headers = parsed[0].map(h => String(h ?? "").trim());
-      const dataRows = parsed.slice(1);
-
-      keyMap = pickHeaderMap(headers);
-
-      rawRows = dataRows
-        .filter(r => r.some(cell => String(cell ?? "").trim() !== ""))
-        .map(r => {
-          const obj = {};
-          headers.forEach((h, idx) => obj[h] = r[idx] ?? "");
-          obj.__searchBlob = buildSearchBlob(obj);
-          return obj;
-        });
-
-      const used = new Set();
-      const colDefs = [];
-
-      for (const canonKey of PREFERRED_COLUMN_ORDER) {
-        const actual = keyMap[canonKey];
-        if (actual && headers.includes(actual) && !used.has(actual)) {
-          colDefs.push({ key: canonKey, label: actual });
-          used.add(actual);
-        }
-      }
-      for (const h of headers) {
-        if (!used.has(h)) colDefs.push({ key: "extra", label: h });
-      }
-      columns = colDefs;
-
-      renderHeader();
-      renderFilters();
-
-      document.getElementById("lastUpdated").textContent =
-        "Last updated: " + new Date().toLocaleString();
-
-      document.getElementById("q").addEventListener("input", debounce(applyAll, 80));
-      document.getElementById("category").addEventListener("change", applyAll);
-      document.getElementById("location").addEventListener("change", applyAll);
-      document.getElementById("availability").addEventListener("change", applyAll);
-
-      document.getElementById("resetBtn").addEventListener("click", () => {
-        document.getElementById("q").value = "";
-        ["category", "location", "availability"].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) el.value = "";
-        });
-        sortState = { key: null, dir: "asc" };
-        applyAll();
-      });
-
-      document.getElementById("downloadCsv").addEventListener("click", () => {
-        const a = document.createElement("a");
-        a.href = CSV_PATH;
-        a.download = CSV_PATH;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      });
-
-      displayRows = rawRows.slice();
-      setStatus("");
-      applyAll();
-      setStickyHeaderTop();
-    }
-
-    function debounce(fn, ms) {
-      let t = null;
-      return (...args) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...args), ms);
-      };
     }
 
     load();
   </script>
 </body>
 </html>
+
