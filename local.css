@@ -1,276 +1,58 @@
-/* styles.css (Excel-like look) */
+/* Excel-report look (matches your screenshot vibe) */
+
 :root{
-  --topBg:#f3f3f3;
-  --gridBg:#ffffff;
-  --line:#d9d9d9;
-  --lineDark:#c9c9c9;
-  --text:#111;
-  --muted:#555;
-  --accent:#217346; /* Excel-ish green */
-  --cellH:24px;
-  --rowHdrW:52px;
-  --colHdrH:26px;
-  --font: Calibri, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  --colCount: 8;
+  --black:#000;
+  --white:#fff;
+  --grid:#000;
+  --bg:#ffffff;
+  --font: Arial, Helvetica, sans-serif;
 }
 
 *{ box-sizing:border-box; }
 
 body{
   margin:0;
-  font-family:var(--font);
-  color:var(--text);
-  background:#fff;
+  background: var(--bg);
+  color:#000;
+  font-family: var(--font);
 }
 
-.excel-top{
-  position:sticky;
-  top:0;
-  z-index:50;
-  border-bottom:1px solid var(--line);
+.page{
+  /* screenshot feels like a centered printable page */
+  max-width: 980px;
+  margin: 24px auto 40px;
+  padding: 0 16px;
 }
 
-/* Faux ribbon */
-.ribbon{
-  display:flex;
-  align-items:center;
-  gap:14px;
-  padding:10px 12px;
-  background:var(--topBg);
-  border-bottom:1px solid var(--line);
-}
-
-.ribbon-left{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  min-width:220px;
-}
-.app-dot{
-  width:14px;height:14px;border-radius:3px;background:var(--accent);
-}
-.title{ font-weight:600; }
-.badge{
-  font-size:12px;
-  color:#1f1f1f;
-  background:#fff;
-  border:1px solid var(--line);
-  padding:2px 8px;
-  border-radius:999px;
-}
-.ribbon-tabs{ display:flex; gap:10px; flex:1; }
-.tab{
-  font-size:13px;
-  color:#333;
-  padding:6px 10px;
-  border-radius:6px;
-}
-.tab.active{
-  background:#fff;
-  border:1px solid var(--line);
-}
-
-.ribbon-right{ min-width:260px; text-align:right; }
-.status{ font-size:12px; color:var(--muted); }
-
-/* Formula bar */
-.formula-bar{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 12px;
-  background:#fff;
-  border-bottom:1px solid var(--line);
-}
-
-.name-box{
-  width:86px;
-  height:30px;
-  border:1px solid var(--lineDark);
-  border-radius:4px;
-  padding:6px 8px;
-  font-size:13px;
-  background:#fff;
-}
-
-.fx{
-  width:34px;
-  height:30px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  color:#333;
-  border:1px solid var(--lineDark);
-  border-radius:4px;
-  background:var(--topBg);
-  font-weight:600;
-}
-
-.formula{
-  flex:1;
-  height:30px;
-  border:1px solid var(--lineDark);
-  border-radius:4px;
-  padding:6px 10px;
-  font-size:13px;
-}
-
-.download{
-  text-decoration:none;
-  font-size:13px;
-  color:#0b5cab;
-  padding:6px 10px;
-  border:1px solid var(--lineDark);
-  border-radius:6px;
-  background:#fff;
-}
-
-/* Sheet region */
-.sheet-wrap{
-  height:calc(100vh - 92px);
-  display:flex;
-  flex-direction:column;
-}
-
-.sheet{
-  position:relative;
-  display:grid;
-  grid-template-columns: var(--rowHdrW) 1fr;
-  grid-template-rows: var(--colHdrH) 1fr;
-  height:100%;
-  overflow:hidden;
-}
-
-.corner{
-  grid-column:1;
-  grid-row:1;
-  background:var(--topBg);
-  border-right:1px solid var(--line);
-  border-bottom:1px solid var(--line);
-}
-
-/* Column headers A,B,C… */
-.col-headers{
-  grid-column:2;
-  grid-row:1;
-  display:grid;
-  grid-auto-flow:column;
-  grid-auto-columns: minmax(140px, 1fr);
-  grid-template-columns: repeat(var(--colCount), minmax(140px, 1fr));
-  background:var(--topBg);
-  border-bottom:1px solid var(--line);
-  overflow:hidden;
-}
-
-.col-h{
-  height:var(--colHdrH);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:12px;
-  color:#333;
-  border-right:1px solid var(--line);
-}
-
-/* Row headers 1,2,3… */
-.row-headers{
-  grid-column:1;
-  grid-row:2;
-  background:var(--topBg);
-  border-right:1px solid var(--line);
-  overflow:auto;
-}
-
-.row-h{
-  height:var(--cellH);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:12px;
-  color:#333;
-  border-bottom:1px solid var(--line);
-}
-
-/* Grid (table) */
-.grid{
-  grid-column:2;
-  grid-row:2;
-  overflow:auto;
-  background:var(--gridBg);
-}
-
-table{
-  border-collapse:collapse;
-  width:max(100%, calc(var(--colCount) * 140px));
-  table-layout:fixed;
-}
-
-td.cell{
-  height:var(--cellH);
-  border-right:1px solid var(--line);
-  border-bottom:1px solid var(--line);
-  padding:3px 6px;
-  font-size:12.5px;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  outline:none;
-}
-
-tr.header-row td.cell{
-  font-weight:600;
-  background:#fbfbfb;
-}
-
-td.cell:hover{
-  background:#f7fbff;
-}
-
-td.cell.selected{
-  position:relative;
-  background:#fff;
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-
-/* Bottom sheet tabs */
-.tabs{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:6px 10px;
-  background:var(--topBg);
-  border-top:1px solid var(--line);
-}
-
-.sheet-tab{
-  font-size:12.5px;
-  padding:6px 12px;
-  border:1px solid var(--line);
-  background:#fff;
-  border-radius:6px;
-  color:#333;
-}
-
-.sheet-tab.active{
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 0 var(--accent);
-}
-
-.sheet-tab.plus{
-  width:34px;
+/* Brand header */
+.brand{
   text-align:center;
+  margin-bottom: 10px;
 }
 
-.spacer{ flex:1; }
-
-.updated{
-  font-size:12px;
-  color:var(--muted);
+.logo{
+  height: 70px;
+  width: auto;
+  margin: 0 auto 6px;
+  display:block;
 }
 
-.error{
-  padding:8px 12px;
-  color:#b00020;
-  font-size:12.5px;
+.title{
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.1;
 }
+
+.date{
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+/* Controls (kept subtle; you can remove entirely if you want “pure report”) */
+.controls{
+  display:grid;
+  grid-template-columns: 1.2f
+
 
